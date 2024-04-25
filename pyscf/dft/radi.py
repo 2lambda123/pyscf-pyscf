@@ -100,7 +100,7 @@ def gauss_chebyshev(n, *args, **kwargs):
 # Individually optimized Treutler/Ahlrichs radius parameter.
 # H - Kr are taken from the original paper JCP 102, 346 (1995)
 # Other elements are copied from Psi4 source code
-_treutler_ahlrichs_xi = [1.0,
+_treutler_ahlrichs_xi = [1.0, # Ghost
     0.8,                               0.9,           # 1s
     1.8, 1.4, 1.3, 1.1, 0.9, 0.9, 0.9, 0.9,           # 2s2p
     1.4, 1.3, 1.3, 1.2, 1.1, 1.0, 1.0, 1.0,           # 3s3p
@@ -118,7 +118,7 @@ _treutler_ahlrichs_xi = [1.0,
     2.500, 2.100,                                                         # 7s
            3.685, 1.500, 1.500, 1.500, 1.500, 1.500, 1.500,
            1.500, 1.500, 1.500, 1.500, 1.500, 1.500, 1.500, 1.500,
-]
+] # noqa: E124
 
 def treutler_ahlrichs(n, chg, *args, **kwargs):
     '''
