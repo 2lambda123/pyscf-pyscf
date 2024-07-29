@@ -373,6 +373,8 @@ ALIAS = {
     'dyallv2z' : 'dyall-basis.dyall_v2z',
     'dyallv3z' : 'dyall-basis.dyall_v3z',
     'dyallv4z' : 'dyall-basis.dyall_v4z',
+# used in COO
+    'ecpccpvdz' : 'ecp-cc-pvdz.dat'
 }
 
 GTH_ALIAS = {

@@ -19,7 +19,9 @@
 '''
 Non-relativistic analytical nuclear gradients for restricted Hartree Fock with kpoints sampling
 '''
+import ctypes
 import numpy as np
+from scipy.special import erfc
 from pyscf import lib
 from pyscf.lib import logger
 from pyscf.grad import rhf as molgrad
@@ -27,8 +29,8 @@ from pyscf.pbc.gto.pseudo.pp import get_vlocG, get_alphas, get_projG, projG_li, 
 from pyscf.pbc.dft.numint import eval_ao_kpts
 from pyscf.pbc import gto, tools
 from pyscf.gto import mole
-import scipy
 
+libpbc = lib.load_library('libpbc')
 
 def grad_elec(mf_grad, mo_energy=None, mo_coeff=None, mo_occ=None, atmlst=None):
     '''
@@ -337,6 +339,7 @@ class GradientsBase(molgrad.GradientsBase):
         return vk
 
     def grad_nuc(self, cell=None, atmlst=None):
+        from .rhf import grad_nuc
         if cell is None: cell = self.cell
         return grad_nuc(cell, atmlst)
 

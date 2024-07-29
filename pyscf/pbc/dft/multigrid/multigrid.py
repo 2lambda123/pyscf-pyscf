@@ -359,6 +359,7 @@ def eval_rho(cell, dm, shls_slice=None, hermi=0, xctype='LDA', kpts=None,
         rho = rho[0]
     return rho
 
+
 def get_nuc(mydf, kpts=None):
     kpts, is_single_kpt = fft._check_kpts(mydf, kpts)
     cell = mydf.cell
@@ -1089,10 +1090,19 @@ def nr_rks(mydf, xc_code, dm_kpts, hermi=1, kpts=None,
     ngrids = numpy.prod(mesh)
     coulG = tools.get_coulG(cell, mesh=mesh)
     vG = numpy.einsum('ng,g->ng', rhoG[:,0], coulG)
+
+    if getattr(mydf, "vpplocG_part1", None) is not None and not mydf.pp_with_erf:
+        for i in range(nset):
+            vG[i] += mydf.vpplocG_part1 * 2
+
     ecoul = .5 * numpy.einsum('ng,ng->n', rhoG[:,0].real, vG.real)
     ecoul+= .5 * numpy.einsum('ng,ng->n', rhoG[:,0].imag, vG.imag)
     ecoul /= cell.vol
     log.debug('Multigrid Coulomb energy %s', ecoul)
+
+    if getattr(mydf, "vpplocG_part1", None) is not None and not mydf.pp_with_erf:
+        for i in range(nset):
+            vG[i] -= mydf.vpplocG_part1
 
     weight = cell.vol / ngrids
     # *(1./weight) because rhoR is scaled by weight in _eval_rhoG.  When

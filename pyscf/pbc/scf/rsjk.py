@@ -98,6 +98,8 @@ class RangeSeparatedJKBuilder(lib.StreamObject):
 
     def has_long_range(self):
         '''Whether to add the long-range part computed with AFT/FFT integrals'''
+        print("self.cell.omega = ", self.cell.omega)
+        print("self.omega      = ", self.omega)
         return self.omega is None or abs(self.cell.omega) < self.omega
 
     def dump_flags(self, verbose=None):
@@ -130,6 +132,9 @@ class RangeSeparatedJKBuilder(lib.StreamObject):
         return self
 
     def build(self, omega=None, intor='int2e'):
+        
+        print(" ---------- In  build rsjk builder ---------- ")
+        
         cpu0 = logger.process_clock(), logger.perf_counter()
         log = logger.new_logger(self)
         cell = self.cell
@@ -141,11 +146,19 @@ class RangeSeparatedJKBuilder(lib.StreamObject):
         if self.omega is None or self.omega == 0:
             # Search a proper range-separation parameter omega that can balance the
             # computational cost between the real space integrals and moment space
-            # integrals
+            # integrals 
+            print("Guess omega")
+            print("before guess self.mesh      = ", self.mesh)
             self.omega, self.mesh, self.ke_cutoff = _guess_omega(cell, kpts, self.mesh)
+            print("after  guess self.omega     = ", self.omega)
+            print("after  guess self.mesh      = ", self.mesh)
+            print("after  guess self.ke_cutoff = ", self.ke_cutoff)
         else:
             self.ke_cutoff = estimate_ke_cutoff_for_omega(cell, self.omega)
             self.mesh = cell.cutoff_to_mesh(self.ke_cutoff)
+            print("generate ke_cutoff and mesh from omega")
+            print("self.ke_cutoff = ", self.ke_cutoff)
+            print("self.mesh      = ", self.mesh)
 
         if cell.dimension == 2 and cell.low_dim_ft_type != 'inf_vacuum':
             # To ensure trunc-coulG converged for all basis
@@ -162,12 +175,13 @@ class RangeSeparatedJKBuilder(lib.StreamObject):
             self.exclude_dd_block = False
 
         # basis with cutoff under ~150 eV are handled by AFTDF
-        ke_cutoff = max(6., self.ke_cutoff)
+        ke_cutoff = max(6., self.ke_cutoff)  # too small ? 
         rs_cell = ft_ao._RangeSeparatedCell.from_cell(
             cell, ke_cutoff, RCUT_THRESHOLD, in_rsjk=True, verbose=log)
         self.rs_cell = rs_cell
 
         self.bvk_kmesh = kmesh = k2gamma.kpts_to_kmesh(cell, kpts)
+        print("self.bvk_kmesh = ", self.bvk_kmesh)
         log.debug('kmesh for bvk-cell = %s', kmesh)
 
         exp_min = np.hstack(cell.bas_exps()).min()
@@ -175,6 +189,10 @@ class RangeSeparatedJKBuilder(lib.StreamObject):
         cutoff = cell.precision / lattice_sum_factor * .1
         self.direct_scf_tol = cutoff
         log.debug('Set RangeSeparationJKBuilder.direct_scf_tol to %g', cutoff)
+        
+        print("exp_min = ", exp_min)
+        print("lattice_sum_factor = ", lattice_sum_factor)
+        print("cutoff = ", cutoff)
 
         rcut_sr = estimate_rcut(rs_cell, self.omega,
                                 exclude_dd_block=self.exclude_dd_block)
@@ -187,6 +205,7 @@ class RangeSeparatedJKBuilder(lib.StreamObject):
         if self.has_long_range():
             rcut = rsdf_builder.estimate_ft_rcut(
                 rs_cell, exclude_dd_block=self.exclude_dd_block)
+            # print("rcut = ", rcut, "of size = ", rcut.size)
             supmol_ft = rsdf_builder._ExtendedMoleFT.from_cell(
                 rs_cell, kmesh, rcut.max(), log)
             supmol_ft.exclude_dd_block = self.exclude_dd_block
@@ -230,6 +249,9 @@ class RangeSeparatedJKBuilder(lib.StreamObject):
         self.qindex = qindex
 
         log.timer('initializing qindex', *cpu0)
+        
+        print(" ---------- end build rsjk builder ---------- ")
+        
         return self
 
     @property
@@ -289,6 +311,8 @@ class RangeSeparatedJKBuilder(lib.StreamObject):
             self.cell_d.nbas > 0 and
             self.has_long_range() and
             (cell.dimension == 3 or cell.low_dim_ft_type != 'inf_vacuum'))
+        
+        # print("self._sr_without_dddd = ", self._sr_without_dddd)
 
         if self._sr_without_dddd:
             # To exclude (dd|dd) block, diffused shell needs to be independent
@@ -312,6 +336,7 @@ class RangeSeparatedJKBuilder(lib.StreamObject):
                 supmol.seg_loc, np.arange(supmol.seg_loc.size-1))
             seg_loc = np.append(seg_loc, supmol.seg_loc[-1]).astype(np.int32)
         else:
+            print("In _get_jk_sr : dddd is not excluded!")
             drv = libpbc.PBCVHF_direct_drv
             nbasp = cell.nbas  # The number of shells in the primitive cell
             cell0_ao_loc = cell.ao_loc
@@ -434,6 +459,7 @@ class RangeSeparatedJKBuilder(lib.StreamObject):
         cell = self.cell
         if omega is not None:  # J/K for RSH functionals
             if omega > 0:  # Long-range part only, call AFTDF
+                print("omega > 0, lr is called, call AFTDF")
                 dfobj = aft.AFTDF(cell, self.kpts)
                 ke_cutoff = estimate_ke_cutoff_for_omega(cell, omega)
                 dfobj.mesh = cell.cutoff_to_mesh(ke_cutoff)
@@ -457,6 +483,8 @@ class RangeSeparatedJKBuilder(lib.StreamObject):
         dm_kpts = np.asarray(dm_kpts)
         dms = _format_dms(dm_kpts, kpts)
 
+        t1 = (logger.process_clock(), logger.perf_counter())
+        
         # compute delta vs if dm is obtained from SCF make_rdm1
         if mo_coeff is not None:
             last_dm, last_vs = self._last_vs
@@ -486,6 +514,9 @@ class RangeSeparatedJKBuilder(lib.StreamObject):
             dm_factor = None
         dms = lib.tag_array(dms, dm_factor=dm_factor)
 
+        t2 = (logger.process_clock(), logger.perf_counter())
+        print('get_jk_sr', t2[0]-t1[0], t2[1]-t1[1])
+
         if with_j and with_k:
             vj, vk = vs
         elif with_j:
@@ -493,15 +524,27 @@ class RangeSeparatedJKBuilder(lib.StreamObject):
         else:
             vj, vk = None, vs[0]
 
+        # print("In rsjk builder get_jk vj_sr = ", vj[0,:16])
+        # print("In rsjk builder get_jk vj_sr = ", vj[-1,-16:])
+        # print("In rsjk builder get_jk vk_sr = ", vk[0,:16])
+        # print("In rsjk builder get_jk vk_sr = ", vk[-1,-16:])
+
         if self.purify and kpts_band is None:
             phase = np.exp(1j*np.dot(self.supmol_sr.bvkmesh_Ls, kpts.T))
             phase /= np.sqrt(len(kpts))
         else:
             phase = None
 
+        t1 = (logger.process_clock(), logger.perf_counter())
+
         if with_j:
             if self.has_long_range():
-                vj += self._get_vj_lr(dms, hermi, kpts, kpts_band)
+                # print("lr is called")
+                vj_lr = self._get_vj_lr(dms, hermi, kpts, kpts_band)
+                # vj += self._get_vj_lr(dms, hermi, kpts, kpts_band)
+                # print("In rsjk builder get_jk vj_lr = ", vj_lr[0,:16])
+                # print("In rsjk builder get_jk vj_lr = ", vj_lr[-1,-16:])
+                vj += vj_lr
             if hermi:
                 vj = (vj + vj.conj().transpose(0,1,3,2)) * .5
             vj = _purify(vj, phase)
@@ -511,10 +554,17 @@ class RangeSeparatedJKBuilder(lib.StreamObject):
 
         if with_k:
             if self.has_long_range():
+                # print("lr is called")
                 approx_vk_lr = dm_factor is None and self.approx_vk_lr_missing_mo
                 if not approx_vk_lr:
-                    vk += self._get_vk_lr(dms, hermi, kpts, kpts_band, exxdiv)
+                    # print("exact vk_lr")
+                    vk_lr = self._get_vk_lr(dms, hermi, kpts, kpts_band, exxdiv)
+                    # print("In rsjk builder get_jk vk_lr = ", vk_lr[0,:16])
+                    # print("In rsjk builder get_jk vk_lr = ", vk_lr[-1,-16:])
+                    # vk += self._get_vk_lr(dms, hermi, kpts, kpts_band, exxdiv)
+                    vk += vk_lr
                 else:
+                    # print("approx vk_lr")
                     mesh1 = np.array(self.mesh)//3*2 + 1
                     logger.debug(self, 'Approximate lr_k with mesh %s', mesh1)
                     with lib.temporary_env(self, mesh=mesh1):
@@ -526,6 +576,10 @@ class RangeSeparatedJKBuilder(lib.StreamObject):
             vk = _format_jks(vk, dm_kpts, kpts_band, kpts)
             if is_zero(kpts) and dm_kpts.dtype == np.double:
                 vk = vk.real.copy()
+
+        t2 = (logger.process_clock(), logger.perf_counter())
+        
+        print('get_jk_lr', t2[0]-t1[0], t2[1]-t1[1])
 
         return vj, vk
 
@@ -609,6 +663,10 @@ class RangeSeparatedJKBuilder(lib.StreamObject):
             coulG_SR = self.weighted_coulG_SR(kpt_allow, False, mesh)
             coulG_SR_at_G0 = None
 
+        # print("coulG_SR   = ", coulG_SR[:16], " with shape = ", coulG_SR.shape)
+        # print("coulG_full = ", coulG[:16], " with shape = ", coulG.shape)
+        # print("mesh = ", mesh)
+
         if naod > 0:
             smooth_bas_mask = rs_cell.bas_type == ft_ao.SMOOTH_BASIS
             smooth_bas_idx = rs_cell.bas_map[smooth_bas_mask]
@@ -627,6 +685,9 @@ class RangeSeparatedJKBuilder(lib.StreamObject):
             # coulG(cell.omega) - coulG(self.omega) . It can support both regular
             # integrals and LR integrals.
             coulG_LR = coulG - coulG_SR
+            # print("coulG_LR   = ", coulG_LR[:16], " with shape = ", coulG_LR.shape)
+            # for loc, x in enumerate(coulG_LR):
+            #     print("coulG_LR[%4d] = %12.6e" % (loc, x))
             buf = np.empty(nkpts*Gblksize*nao**2*2)
             for p0, p1 in lib.prange(0, ngrids, Gblksize):
                 Gpq = ft_kern(Gv[p0:p1], gxyz[p0:p1], Gvbase, kpt_allow, out=buf)

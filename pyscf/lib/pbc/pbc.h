@@ -52,13 +52,13 @@ typedef struct {
         int cutoff;
         float eta;
 
-        // parameters for ft_ao
-        double *Gv;
-        double *b;
-        int *gxyz;
-        int *gs;
+    // parameters for ft_ao
+    double *Gv;
+    double *b;
+    int *gxyz;
+    int *gs;
 
-        int (*intor)();
+    int (*intor)();
 } BVKEnvs;
 
 // It is preferable to use the float16 type to save log value. fp16 type is
@@ -66,3 +66,5 @@ typedef struct {
 // adjustment factor 32 to ensure accuracy.
 #define LOG_ADJUST      32
 #endif
+
+#include "pbc_isdf.h"

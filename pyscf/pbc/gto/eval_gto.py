@@ -91,11 +91,14 @@ def eval_gto(cell, eval_name, coords, comp=None, kpts=None, kpt=None,
     >>> ao_value[0].shape
     (3, 1000, 2)
     '''
+    
+    # print("eval_name = ", eval_name)
     if eval_name[:3] == 'PBC':  # PBCGTOval_xxx
         eval_name, comp = _get_intor_and_comp(cell, eval_name[3:], comp)
     else:
         eval_name, comp = _get_intor_and_comp(cell, eval_name, comp)
     eval_name = 'PBC' + eval_name
+    # print("eval_name = ", eval_name)
 
     atm = np.asarray(cell._atm, dtype=np.int32, order='C')
     bas = np.asarray(cell._bas, dtype=np.int32, order='C')

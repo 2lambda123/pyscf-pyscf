@@ -103,6 +103,11 @@ class KnownValues(unittest.TestCase):
         out = mydf.get_pp(max_memory=2)
         self.assertAlmostEqual(abs(ref-out).max(), 0, 8)
 
+        mydf = multigrid.MultiGridFFTDF(cell_nonorth)
+        mydf.max_memory = 10
+        out = mydf.get_pp(max_memory=2)
+        self.assertAlmostEqual(abs(ref-out).max(), 0, 9)
+
     def test_orth_get_nuc_kpts(self):
         ref = df.FFTDF(cell_orth).get_nuc(kpts)
         out = multigrid.MultiGridFFTDF(cell_orth).get_nuc(kpts)

@@ -24,7 +24,6 @@ from pyscf.pbc.gto import pseudo
 from pyscf.pbc.gto.pseudo import pp_int
 from pyscf.data.nist import BOHR
 
-
 def get_pp_loc_part2(cell, kpt=np.zeros(3)):
     coords = gen_grid.gen_uniform_grids(cell)
     aoR = numint.eval_ao(cell, coords, kpt)

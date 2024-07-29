@@ -67,9 +67,11 @@ SCFDIIS = SCF_DIIS = DIIS = CDIIS
 
 def get_err_vec_orig(s, d, f):
     '''error vector = SDF - FDS'''
+    dtype = f.dtype
     if isinstance(f, numpy.ndarray) and f.ndim == 2:
         sdf = reduce(lib.dot, (s,d,f))
         errvec = (sdf.conj().T - sdf).ravel()
+        errvec = lib.device_get(errvec, dtype=dtype)
 
     elif isinstance(f, numpy.ndarray) and f.ndim == 3 and s.ndim == 3:
         errvec = []

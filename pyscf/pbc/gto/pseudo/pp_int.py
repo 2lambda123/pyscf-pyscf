@@ -48,12 +48,53 @@ def get_pp_loc_part1(cell, kpts=None):
     '''
     raise NotImplementedError
 
+
+def get_pp_loc_part1_gs(cell, Gv):
+    from pyscf.pbc import tools
+    coulG = tools.get_coulG(cell, Gv=Gv)
+    G2 = numpy.einsum('ix,ix->i', Gv, Gv)
+    G0idx = numpy.where(G2==0)[0]
+    ngrid = len(G2)
+    Gv = numpy.asarray(Gv, order='C', dtype=numpy.double)
+    coulG = numpy.asarray(coulG, order='C', dtype=numpy.double)
+    G2 = numpy.asarray(G2, order='C', dtype=numpy.double)
+
+    coords = cell.atom_coords()
+    coords = numpy.asarray(coords, order='C', dtype=numpy.double)
+    Z = numpy.empty([cell.natm,], order='C', dtype=numpy.double)
+    rloc = numpy.empty([cell.natm,], order='C', dtype=numpy.double)
+    for ia in range(cell.natm):
+        Z[ia] = cell.atom_charge(ia)
+        symb = cell.atom_symbol(ia)
+        if symb in cell._pseudo:
+            rloc[ia] = cell._pseudo[symb][1]
+        else:
+            rloc[ia] = -999
+
+    out = numpy.empty((ngrid,), order='C', dtype=numpy.complex128)
+    fn = getattr(libpbc, "pp_loc_part1_gs", None)
+    try:
+        fn(out.ctypes.data_as(ctypes.c_void_p),
+           coulG.ctypes.data_as(ctypes.c_void_p),
+           Gv.ctypes.data_as(ctypes.c_void_p),
+           G2.ctypes.data_as(ctypes.c_void_p),
+           ctypes.c_int(G0idx), ctypes.c_int(ngrid),
+           Z.ctypes.data_as(ctypes.c_void_p),
+           coords.ctypes.data_as(ctypes.c_void_p),
+           rloc.ctypes.data_as(ctypes.c_void_p),
+           ctypes.c_int(cell.natm))
+    except Exception as e:
+        raise RuntimeError("Failed to get vlocG part1. %s" % e)
+    return out
+
+
 def get_gth_vlocG_part1(cell, Gv):
     '''PRB, 58, 3641 Eq (5) first term
     '''
     from pyscf.pbc import tools
     coulG = tools.get_coulG(cell, Gv=Gv)
     G2 = numpy.einsum('ix,ix->i', Gv, Gv)
+    #G2 = lib.multiply_sum(Gv, Gv, axis=1)
     G0idx = numpy.where(G2==0)[0]
 
     if cell.dimension != 2 or cell.low_dim_ft_type == 'inf_vacuum':
@@ -66,7 +107,7 @@ def get_gth_vlocG_part1(cell, Gv):
             if symb in cell._pseudo:
                 pp = cell._pseudo[symb]
                 rloc, nexp, cexp = pp[1:3+1]
-                vlocG[ia] *= numpy.exp(-0.5*rloc**2 * G2)
+                vlocG[ia] *= lib.exp(-0.5*rloc**2 * G2)
                 # alpha parameters from the non-divergent Hartree+Vloc G=0 term.
                 vlocG[ia,G0idx] = -2*numpy.pi*Zia*rloc**2
 
@@ -521,6 +562,7 @@ def fake_cell_vloc(cell, cn=0, atm_id=None):
     fakecell._atm = numpy.asarray(fake_atm, dtype=numpy.int32).reshape(-1, gto.ATM_SLOTS)
     fakecell._bas = numpy.asarray(fake_bas, dtype=numpy.int32).reshape(-1, gto.BAS_SLOTS)
     fakecell._env = numpy.asarray(numpy.hstack(fake_env), dtype=numpy.double)
+    fakecell.precision = EPS_PPL
     return fakecell
 
 

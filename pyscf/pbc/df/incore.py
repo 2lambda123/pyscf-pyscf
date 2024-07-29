@@ -22,6 +22,7 @@ from pyscf import lib
 from pyscf import gto
 from pyscf.lib import logger
 import pyscf.df
+from pyscf.gto.mole import PTR_EXPCUTOFF
 from pyscf.scf import _vhf
 from pyscf.pbc.df import ft_ao
 from pyscf.pbc import gto as pbcgto
@@ -103,14 +104,22 @@ def aux_e2(cell, auxcell_or_auxbasis, intor='int3c2e', aosym='s1', comp=None,
 
     if len(kptij_lst) == 1:
         out = out[0]
+    logger.timer(cell, 'aux_e2', *t0)
     return out
 
 def wrap_int3c(cell, auxcell, intor='int3c2e', aosym='s1', comp=1,
-               kptij_lst=np.zeros((1,2,3)), cintopt=None, pbcopt=None):
+               kptij_lst=np.zeros((1,2,3)), cintopt=None, pbcopt=None,
+               neighbor_list=None):
     '''Generate a 3-center integral kernel which can be called repeatedly in
     the incore or outcore driver. The kernel function has a simple function
     signature f(shls_slice)
     '''
+    if neighbor_list is not None:
+        return wrap_int3c_screened(cell, auxcell, intor=intor, aosym=aosym,
+                                   comp=comp, kptij_lst=kptij_lst,
+                                   cintopt=cintopt, pbcopt=pbcopt,
+                                   neighbor_list=neighbor_list)
+
     kpti = kptij_lst[:,0]
     kptj = kptij_lst[:,1]
     j_only = is_zero(kpti - kptj)

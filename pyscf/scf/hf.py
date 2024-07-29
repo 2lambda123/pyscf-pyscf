@@ -119,14 +119,28 @@ Keyword argument "init_dm" is replaced by "dm0"''')
     mol = mf.mol
     s1e = mf.get_ovlp(mol)
 
+    cput1 = logger.timer(mf, 'get ovlp', *cput0)
+
     if dm0 is None:
         dm = mf.get_init_guess(mol, mf.init_guess, s1e=s1e, **kwargs)
     else:
         dm = dm0
+    
+    cput1 = logger.timer(mf, 'init guess', *cput1)
 
     h1e = mf.get_hcore(mol)
+    
+    cput1 = logger.timer(mf, 'get_hcore', *cput1)
+    
+    
     vhf = mf.get_veff(mol, dm)
+    
+    cput1 = logger.timer(mf, 'get_veff', *cput1)
+    
     e_tot = mf.energy_tot(dm, h1e, vhf)
+    
+    cput1 = logger.timer(mf, 'energy_tot', *cput1)
+    
     logger.info(mf, 'init E= %.15g', e_tot)
 
     scf_conv = False
@@ -156,10 +170,14 @@ Keyword argument "init_dm" is replaced by "dm0"''')
     else:
         mf_diis = None
 
+    cput1 = logger.timer(mf, 'init DIIS', *cput1)
+
     if dump_chk and mf.chkfile:
         # Explicit overwrite the mol object in chkfile
         # Note in pbc.scf, mf.mol == mf.cell, cell is saved under key "mol"
         chkfile.save_mol(mol, mf.chkfile)
+
+    cput1 = logger.timer(mf, 'save mol', *cput1)
 
     # A preprocessing hook before the SCF iteration
     mf.pre_kernel(locals())
@@ -173,6 +191,8 @@ Keyword argument "init_dm" is replaced by "dm0"''')
         fock = mf.get_fock(h1e, s1e, vhf, dm, cycle, mf_diis, fock_last=fock_last)
         mo_energy, mo_coeff = mf.eig(fock, s1e)
         mo_occ = mf.get_occ(mo_energy, mo_coeff)
+        mf.mo_coeff = mo_coeff ## NOTE: add by Ning to support occ-RI-K
+        mf.mo_occ = mo_occ     ## NOTE: add by Ning to support occ-RI-K
         dm = mf.make_rdm1(mo_coeff, mo_occ)
         vhf = mf.get_veff(mol, dm, dm_last, vhf)
         e_tot = mf.energy_tot(dm, h1e, vhf)

@@ -23,6 +23,7 @@ from pyscf.gto import ATM_SLOTS, BAS_SLOTS, ATOM_OF, PTR_COORD
 from pyscf.pbc.lib.kpts_helper import get_kconserv, get_kconserv3  # noqa
 from pyscf import __config__
 
+libpbc = lib.load_library('libpbc')
 FFT_ENGINE = getattr(__config__, 'pbc_tools_pbc_fft_engine', 'BLAS')
 
 def _fftn_blas(f, mesh):
@@ -33,9 +34,10 @@ def _fftn_blas(f, mesh):
     expRGy = np.exp(np.einsum('x,k->xk', -2j*np.pi*np.arange(mesh[1]), Gy))
     expRGz = np.exp(np.einsum('x,k->xk', -2j*np.pi*np.arange(mesh[2]), Gz))
     out = np.empty(f.shape, dtype=np.complex128)
-    buf = np.empty(mesh, dtype=np.complex128)
+    #buf = np.empty(mesh, dtype=np.complex128)
     for i, fi in enumerate(f):
-        buf[:] = fi.reshape(mesh)
+        #buf[:] = fi.reshape(mesh)
+        buf = lib.copy(fi.reshape(mesh), dtype=np.complex128)
         g = lib.dot(buf.reshape(mesh[0],-1).T, expRGx, c=out[i].reshape(-1,mesh[0]))
         g = lib.dot(g.reshape(mesh[1],-1).T, expRGy, c=buf.reshape(-1,mesh[1]))
         g = lib.dot(g.reshape(mesh[2],-1).T, expRGz, c=out[i].reshape(-1,mesh[2]))
@@ -49,9 +51,10 @@ def _ifftn_blas(g, mesh):
     expRGy = np.exp(np.einsum('x,k->xk', 2j*np.pi*np.arange(mesh[1]), Gy))
     expRGz = np.exp(np.einsum('x,k->xk', 2j*np.pi*np.arange(mesh[2]), Gz))
     out = np.empty(g.shape, dtype=np.complex128)
-    buf = np.empty(mesh, dtype=np.complex128)
+    #buf = np.empty(mesh, dtype=np.complex128)
     for i, gi in enumerate(g):
-        buf[:] = gi.reshape(mesh)
+        #buf[:] = gi.reshape(mesh)
+        buf = lib.copy(gi.reshape(mesh), dtype=np.complex128)
         f = lib.dot(buf.reshape(mesh[0],-1).T, expRGx, 1./mesh[0], c=out[i].reshape(-1,mesh[0]))
         f = lib.dot(f.reshape(mesh[1],-1).T, expRGy, 1./mesh[1], c=buf.reshape(-1,mesh[1]))
         f = lib.dot(f.reshape(mesh[2],-1).T, expRGz, 1./mesh[2], c=out[i].reshape(-1,mesh[2]))
@@ -135,6 +138,19 @@ elif FFT_ENGINE == 'NUMPY+BLAS':
             return _ifftn_blas(a, mesh)
         else:
             return np.fft.ifftn(a, axes=(1,2,3))
+
+elif FFT_ENGINE == 'CUPY':
+    import cupy
+    def _fftn_wrapper(a):
+        a = lib.device_put(a)
+        a_fft = cupy.fft.fftn(a, axes=(1,2,3))
+        a_fft = lib.device_get(a_fft, dtype=np.complex128)
+        return a_fft
+    def _ifftn_wrapper(a):
+        a = lib.device_put(a)
+        a_ifft = cupy.fft.ifftn(a, axes=(1,2,3))
+        a_ifft = lib.device_get(a_ifft, dtype=np.complex128)
+        return a_ifft
 
 #?elif:  # 'FFTW+BLAS'
 else:  # 'BLAS'
@@ -238,9 +254,6 @@ def get_coulG(cell, k=np.zeros(3), exx=False, mf=None, mesh=None, Gv=None,
             Whether this is an exchange matrix element
         mf : instance of :class:`SCF`
 
-    Returns:
-        coulG : (ngrids,) ndarray
-            The Coulomb kernel.
         mesh : (3,) ndarray of ints (= nx,ny,nz)
             The number G-vectors along each direction.
         omega : float
@@ -253,6 +266,11 @@ def get_coulG(cell, k=np.zeros(3), exx=False, mf=None, mesh=None, Gv=None,
             range-separated JK builder and range-separated DF (and other
             range-separated integral methods) which require Ewald probe charge
             to be computed with regular Coulomb interaction (1/r12).
+        
+    Returns:
+        coulG : (ngrids,) ndarray
+            The Coulomb kernel.
+        
     '''
     exxdiv = exx
     if isinstance(exx, str):
@@ -301,7 +319,8 @@ def get_coulG(cell, k=np.zeros(3), exx=False, mf=None, mesh=None, Gv=None,
             kG[on_edge[:,2]== 1] -= 2 * box_edge[2]
             kG[on_edge[:,2]==-1] += 2 * box_edge[2]
 
-    absG2 = np.einsum('gi,gi->g', kG, kG)
+    #absG2 = np.einsum('gi,gi->g', kG, kG)
+    absG2 = lib.multiply_sum(kG, kG, axis=1)
 
     if getattr(mf, 'kpts', None) is not None:
         kpts = mf.kpts
@@ -352,7 +371,7 @@ def get_coulG(cell, k=np.zeros(3), exx=False, mf=None, mesh=None, Gv=None,
         G0_idx = np.where(absG2==0)[0]
         if cell.dimension != 2 or cell.low_dim_ft_type == 'inf_vacuum':
             with np.errstate(divide='ignore'):
-                coulG = 4*np.pi/absG2
+                coulG = lib.multiply(4*np.pi, lib.reciprocal(absG2))
                 coulG[G0_idx] = 0
 
         elif cell.dimension == 2:
@@ -749,6 +768,212 @@ def cutoff_to_gs(a, cutoff):
 def gs_to_cutoff(a, gs):
     '''Deprecated.  Replaced by function mesh_to_cutoff.'''
     return mesh_to_cutoff(a, [2*n+1 for n in gs])
+
+def gradient_gs(f_gs, Gv):
+    '''
+    Compute the G-space components of :math:`\nabla f(r)`
+    given :math:`f(G)` and :math:`G`,
+    which is equivalent to einsum('np,px->nxp', f_gs, 1j*Gv)
+    '''
+    ng, dim = Gv.shape
+    if dim != 3:
+        raise NotImplementedError
+    Gv = np.asarray(Gv, order='C', dtype=float)
+    f_gs = np.asarray(f_gs.reshape(-1,ng), order='C', dtype=np.complex128)
+    n = f_gs.shape[0]
+    out = np.empty((n,dim,ng), dtype=np.complex128)
+
+    fn = getattr(libpbc, 'gradient_gs', None)
+    try:
+        fn(out.ctypes.data_as(ctypes.c_void_p),
+           f_gs.ctypes.data_as(ctypes.c_void_p),
+           Gv.ctypes.data_as(ctypes.c_void_p),
+           ctypes.c_int(n), ctypes.c_size_t(ng))
+    except Exception as e:
+        raise RuntimeError("Failed to contract f_gs and iGv. %s" % e)
+    return out
+
+def gradient_by_fft(f, Gv, mesh):
+    '''
+    Compute :math:`\nabla f(r)` by FFT.
+    '''
+    ng, dim = Gv.shape
+    assert ng == np.prod(mesh)
+    f_gs = fft(f.reshape(-1,ng), mesh)
+    f1_gs = gradient_gs(f_gs, Gv)
+    f1_rs = ifft(f1_gs.reshape(-1,ng), mesh)
+    f1_rs = lib.copy(f1_rs, dtype=float)
+    f1 = f1_rs.reshape(-1,dim,ng)
+    if f.ndim == 1:
+        f1 = f1[0]
+    return f1
+
+def gradient_by_fdiff(cell, f, mesh=None):
+    assert f.dtype == float
+    if mesh is None:
+        mesh = cell.mesh
+    mesh = np.asarray(mesh, order='C', dtype=np.int32)
+    a = cell.lattice_vectors()
+    # cube
+    dr = [a[i,i] / mesh[i] for i in range(3)]
+    dr = np.asarray(dr, order='C', dtype=float)
+    f = np.asarray(f, order='C')
+    df = np.empty([3,*mesh], order='C', dtype=float)
+    fun = getattr(libpbc, 'rs_gradient_cd3')
+    fun(f.ctypes.data_as(ctypes.c_void_p),
+        df.ctypes.data_as(ctypes.c_void_p),
+        mesh.ctypes.data_as(ctypes.c_void_p),
+        dr.ctypes.data_as(ctypes.c_void_p))
+    return df.reshape(3,-1)
+
+def laplacian_gs(f_gs, Gv):
+    r'''
+    Compute the G-space components of :math:`\Delta f(r)`
+    given :math:`f(G)` and :math:`G`,
+    which is equivalent to einsum('np,p->np', f_gs, -G2)
+    '''
+    ng, dim = Gv.shape
+    absG2 = lib.multiply_sum(Gv, Gv, axis=1)
+    f_gs = f_gs.reshape(-1,ng)
+    out = np.empty_like(f_gs, order='C', dtype=np.complex128)
+    for i, f_gs_i in enumerate(f_gs):
+        out[i] = lib.multiply(f_gs_i, -absG2, out=out[i])
+    return out
+
+def laplacian_by_fft(f, Gv, mesh):
+    r'''
+    Compute :math:`\Delta f(r)` by FFT.
+    '''
+    ng, dim = Gv.shape
+    assert ng == np.prod(mesh)
+    f_gs = fft(f.reshape(-1,ng), mesh)
+    f2_gs = laplacian_gs(f_gs, Gv)
+    f2_rs = ifft(f2_gs.reshape(-1,ng), mesh)
+    f2_rs = lib.copy(f2_rs, dtype=float)
+    f2 = f2_rs.reshape(-1,ng)
+    if f.ndim == 1:
+        f2 = f2[0]
+    return f2
+
+def laplacian_by_fdiff(cell, f, mesh=None):
+    assert f.dtype == float
+    if mesh is None:
+        mesh = cell.mesh
+    mesh = np.asarray(mesh, order='C', dtype=np.int32)
+    assert f.size == np.prod(mesh)
+    a = cell.lattice_vectors()
+    # cube
+    dr = [a[i,i] / mesh[i] for i in range(3)]
+    dr = np.asarray(dr, order='C', dtype=float)
+    f = np.asarray(f, order='C')
+    lf = np.empty_like(f)
+    fun = getattr(libpbc, 'rs_laplacian_cd3')
+    fun(f.ctypes.data_as(ctypes.c_void_p),
+        lf.ctypes.data_as(ctypes.c_void_p),
+        mesh.ctypes.data_as(ctypes.c_void_p),
+        dr.ctypes.data_as(ctypes.c_void_p))
+    return lf.ravel()
+
+def solve_poisson(cell, rho, coulG=None, Gv=None, mesh=None,
+                  compute_potential=True, compute_gradient=False,
+                  real_potential=True):
+    if mesh is None:
+        mesh = cell.mesh
+    if coulG is None:
+        coulG = get_coulG(cell, mesh=mesh)
+
+    ng = np.prod(mesh)
+    rhoG = fft(rho.reshape(-1,ng), mesh)
+    phiR = None
+    if compute_potential:
+        phiG = np.empty_like(rhoG)
+        for i in range(len(phiG)):
+            phiG[i] = lib.multiply(rhoG[i], coulG)
+        phiR = ifft(phiG, mesh)
+        if real_potential:
+            phiR = lib.copy(phiR, dtype=float)
+
+    dphiR = None
+    if compute_gradient:
+        if Gv is None:
+            Gv = cell.get_Gv(mesh)
+        _ng, dim = Gv.shape
+        assert _ng == ng
+        if dim != 3:
+            raise NotImplementedError
+
+        drhoG = gradient_gs(rhoG, Gv).reshape(-1,dim,ng)
+        dphiR = np.empty_like(drhoG, dtype=np.complex128)
+        for i in range(len(dphiR)):
+            for x in range(dim):
+                dphiG = lib.multiply(drhoG[i,x], coulG)
+                dphiR[i,x] = ifft(dphiG, mesh)
+        if real_potential:
+            dphiR = lib.copy(dphiR, dtype=float)
+
+    if rho.ndim == 1:
+        if compute_potential:
+            phiR = phiR[0]
+        if compute_gradient:
+            dphiR = dphiR[0]
+    return phiR, dphiR
+
+def restrict_by_fft(f, mesh, submeshes):
+    from pyscf.pbc.dft.multigrid.utils import _take_4d
+    real = False
+    if f.dtype == float:
+        real = True
+
+    ng = np.prod(mesh)
+    f_gs = fft(f.reshape(-1,ng), mesh).reshape(-1,*mesh)
+
+    out = []
+    submeshes = np.asarray(submeshes).reshape(-1,3)
+    for i, submesh in enumerate(submeshes):
+        ng_sub = np.prod(submesh)
+        gx = np.fft.fftfreq(submesh[0], 1./submesh[0]).astype(np.int32)
+        gy = np.fft.fftfreq(submesh[1], 1./submesh[1]).astype(np.int32)
+        gz = np.fft.fftfreq(submesh[2], 1./submesh[2]).astype(np.int32)
+        f_sub_gs = _take_4d(f_gs, (None, gx, gy, gz)).reshape(-1,ng_sub)
+        f_sub_rs = ifft(f_sub_gs, submesh)
+        if real:
+            f_sub_rs = lib.copy(f_sub_rs, dtype=float)
+        fac = ng_sub / ng
+        f_sub_rs = lib.multiply(fac, f_sub_rs, out=f_sub_rs)
+        if f.ndim == 1:
+            f_sub_rs = f_sub_rs[0]
+        out.append(f_sub_rs)
+
+    if len(submeshes) == 1:
+        out = out[0]
+    return out
+
+def prolong_by_fft(f_sub, mesh, submesh):
+    from pyscf.pbc.dft.multigrid.utils import _takebak_4d
+    real = False
+    if f_sub.dtype == float:
+        real = True
+    input_is_vector = f_sub.ndim == 1
+
+    ng = np.prod(mesh)
+    ng_sub = np.prod(submesh)
+    f_sub = f_sub.reshape(-1,ng_sub)
+    nset = f_sub.shape[0]
+    f_sub_gs = fft(f_sub, submesh)
+    gx = np.fft.fftfreq(submesh[0], 1./submesh[0]).astype(np.int32)
+    gy = np.fft.fftfreq(submesh[1], 1./submesh[1]).astype(np.int32)
+    gz = np.fft.fftfreq(submesh[2], 1./submesh[2]).astype(np.int32)
+    f_gs = np.zeros([nset, *mesh], dtype=np.complex128)
+    f_gs = _takebak_4d(f_gs, f_sub_gs.reshape(-1,*submesh), (None, gx, gy, gz)).reshape(-1,ng)
+    f_rs = ifft(f_gs, mesh)
+    if real:
+        f_rs = lib.copy(f_rs, dtype=float)
+    fac = ng / ng_sub
+    f_rs = lib.multiply(fac, f_rs, out=f_rs)
+
+    if input_is_vector:
+        f_rs = f_rs[0]
+    return f_rs
 
 def round_to_cell0(r, tol=1e-6):
     '''Round scaled coordinates to reference unit cell

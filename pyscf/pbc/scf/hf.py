@@ -564,8 +564,10 @@ class SCF(mol_hf.SCF):
         #    logger.info(self, 'WS alpha = %s', self.exx_alpha)
 
         kpts = self.kpts
+        # print("kpts = ", kpts)
         if self.rsjk:
-            if not np.all(self.rsjk.kpts == self.kpt):
+            # print("rsjk.kpts = ", self.rsjk.kpts)
+            if not np.all(self.rsjk.kpts == self.kpts):
                 self.rsjk = self.rsjk.__class__(cell, kpts)
 
         # for GDF and MDF
@@ -667,7 +669,7 @@ class SCF(mol_hf.SCF):
         dm = np.asarray(dm)
         nao = dm.shape[-1]
 
-        if (not omega and kpts_band is None and
+        if (0 and not omega and kpts_band is None and
             # TODO: generate AO integrals with rsjk algorithm
             not self.rsjk and
             (self.exxdiv == 'ewald' or not self.exxdiv) and
@@ -684,11 +686,21 @@ class SCF(mol_hf.SCF):
                 _ewald_exxdiv_for_G0(self.cell, kpt, dm.reshape(-1,nao,nao),
                                      vk.reshape(-1,nao,nao))
         elif self.rsjk:
-            vj, vk = self.rsjk.get_jk(dm.reshape(-1,nao,nao), hermi, kpt, kpts_band,
+            ## NOTE: changed by Ning to support occ-RI-K
+            dm_shape_init = dm.shape      
+            dm = dm.reshape(-1, nao, nao)
+            dm = lib.tag_array(dm, mo_coeff=self.mo_coeff, mo_occ=self.mo_occ)
+            vj, vk = self.rsjk.get_jk(dm, hermi, kpt, kpts_band,
                                       with_j, with_k, omega, exxdiv=self.exxdiv)
+            dm = dm.reshape(dm_shape_init)
         else:
-            vj, vk = self.with_df.get_jk(dm.reshape(-1,nao,nao), hermi, kpt, kpts_band,
+            ## NOTE: changed by Ning to support occ-RI-K
+            dm_shape_init = dm.shape
+            dm = dm.reshape(-1, nao, nao)
+            dm = lib.tag_array(dm, mo_coeff=self.mo_coeff, mo_occ=self.mo_occ)
+            vj, vk = self.with_df.get_jk(dm, hermi, kpt, kpts_band,
                                          with_j, with_k, omega, exxdiv=self.exxdiv)
+            dm = dm.reshape(dm_shape_init)
 
         if with_j:
             vj = _format_jks(vj, dm, kpts_band)
@@ -862,8 +874,12 @@ class SCF(mol_hf.SCF):
         if 'DF' in J or 'DF' in K:
             if 'DF' in J and 'DF' in K:
                 assert J == K
+                df_method = J if 'DF' in J else K
+                print("df_method = ", df_method)
+                self.with_df = getattr(df, df_method)(self.cell, self.kpts)
             else:
                 df_method = J if 'DF' in J else K
+                print("df_method = ", df_method)
                 self.with_df = getattr(df, df_method)(self.cell, self.kpts)
 
         if 'RS' in J or 'RS' in K:

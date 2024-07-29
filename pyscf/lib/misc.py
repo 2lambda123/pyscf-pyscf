@@ -81,6 +81,15 @@ if sys.platform.startswith('linux'):
 from pyscf.lib import parameters as param
 from pyscf import __config__
 
+CUBLAS = getattr(__config__, 'lib_cublas', False)
+if CUBLAS:
+    try:
+        # use cupy as the backend for now
+        import cupy
+    except ImportError:
+        raise ImportError("CUBLAS backend is not available.")
+CUBLAS_SINGLE_PREC = getattr(__config__, 'lib_cublas_single_precision', False)
+
 if h5py.version.version[:4] == '2.2.':
     sys.stderr.write('h5py-%s is found in your environment. '
                      'h5py-%s has bug in threading mode.\n'

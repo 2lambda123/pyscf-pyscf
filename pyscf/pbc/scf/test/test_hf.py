@@ -545,6 +545,29 @@ class KnownValues(unittest.TestCase):
         self.assertAlmostEqual(scf_result['O'][0], -15.193243796069835, 9)
         self.assertAlmostEqual(scf_result['H'][0], -0.49777509423571864, 9)
 
+    def test_init_guess_by_atom(self):
+        with lib.temporary_env(cell, dimension=1):
+            dm = mf.get_init_guess(key='atom')
+            kdm = kmf.get_init_guess(key='atom')
+
+        self.assertAlmostEqual(lib.fp(dm), 0.18074522075843902, 7)
+
+        self.assertEqual(kdm.ndim, 3)
+        self.assertAlmostEqual(lib.fp(dm), 0.18074522075843902, 7)
+
+    def test_atom_hf_with_pp(self):
+        mol = pbcgto.Cell()
+        mol.build(
+            verbose = 7,
+            output = '/dev/null',
+            atom  = 'O 0 0 0; H 0 0 -1; H 0 0 1',
+            a = [[5, 0, 0], [0, 5, 0], [0, 0, 5]],
+            basis = 'gth-dzvp',
+            pseudo = 'gth-pade')
+        scf_result = atom_hf.get_atm_nrhf(mol)
+        self.assertAlmostEqual(scf_result['O'][0], -15.193243796069835, 9)
+        self.assertAlmostEqual(scf_result['H'][0], -0.49777509423571864, 9)
+
     def test_jk(self):
         nao = cell.nao
         numpy.random.seed(2)
